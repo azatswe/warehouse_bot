@@ -11,6 +11,7 @@ from aiogram.types import CallbackQuery, Chat, InlineKeyboardMarkup, Message, Ph
 from database import Database
 from handlers import router
 from main import AllowedUsersMiddleware
+from widgets import SendWidget
 
 
 class RecordingSession(BaseSession):
@@ -32,6 +33,16 @@ class RecordingSession(BaseSession):
                 from_user=User(id=bot.id, is_bot=True, first_name="Warehouse"),
                 text=method.text,
                 reply_markup=method.reply_markup if isinstance(method.reply_markup, InlineKeyboardMarkup) else None,
+            )
+            self.sent_messages.append(message)
+            return message
+        if isinstance(method, SendWidget):
+            message = Message(
+                message_id=len(self.calls),
+                date=datetime.now(timezone.utc),
+                chat=Chat(id=method.chat_id, type="private"),
+                from_user=User(id=bot.id, is_bot=True, first_name="Warehouse"),
+                caption=method.caption,
             )
             self.sent_messages.append(message)
             return message
@@ -69,12 +80,12 @@ class HandlerFlowTests(unittest.IsolatedAsyncioTestCase):
         await self.bot.session.close()
         self.temp_dir.cleanup()
 
-    async def send_text(self, text):
+    async def send_text(self, text, chat_type="private"):
         self.update_id += 1
         message = Message(
             message_id=self.update_id,
             date=datetime.now(timezone.utc),
-            chat=Chat(id=42, type="private"),
+            chat=Chat(id=42 if chat_type == "private" else -42, type=chat_type),
             from_user=User(id=42, is_bot=False, first_name="Azat"),
             text=text,
         )
@@ -110,7 +121,7 @@ class HandlerFlowTests(unittest.IsolatedAsyncioTestCase):
         menu = self.session.calls[0].reply_markup
         self.assertEqual(
             {button.text for row in menu.keyboard for button in row},
-            {"Добавить товар", "Списать товар", "Остатки", "Найти товар", "Удалить товар", "История операций"},
+            {"Добавить товар", "Списать товар", "Остатки", "Найти товар", "Удалить товар", "История операций", "📊 Панель склада"},
         )
         await self.send_text("Добавить товар")
         await self.send_photo()
@@ -223,6 +234,20 @@ class HandlerFlowTests(unittest.IsolatedAsyncioTestCase):
         products = await self.db.list_products()
         self.assertEqual(len(products), 1)
         self.assertEqual(products[0]["quantity"], 1_000_000)
+
+        await self.send_text("/widget")
+        widget = self.session.calls[-1]
+        self.assertIsInstance(widget, SendWidget)
+        self.assertEqual(widget.chat_id, 42)
+        self.assertFalse(widget.allow_queries)
+        self.assertFalse(widget.is_shared)
+        self.assertIn("Панель склада", widget.html)
+        self.assertIn("1 000 000", widget.html)
+        self.assertIn("Полный список: /list", widget.caption)
+
+        await self.send_text("/widget", chat_type="group")
+        self.assertIsInstance(self.session.calls[-1], SendMessage)
+        self.assertIn("только в личном чате", self.session.calls[-1].text)
 
         self.dispatcher["db"] = FailingDatabase()
         with self.assertLogs("handlers.stock", level="ERROR"):

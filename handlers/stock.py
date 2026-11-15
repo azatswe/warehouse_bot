@@ -10,6 +10,7 @@ from aiogram.types import CallbackQuery, ErrorEvent, Message
 
 import keyboards
 from database import Database
+from widgets import SendWidget, render_stock_widget, stock_widget_caption
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -107,6 +108,21 @@ async def show_stock(message: Message, db: Database) -> None:
     await send_chunked_lines(message, lines)
 
 
+async def show_stock_widget(message: Message, db: Database, state: FSMContext) -> None:
+    await state.clear()
+    if message.chat.type != "private":
+        await message.answer("Панель склада доступна только в личном чате с ботом.", reply_markup=keyboards.main_menu())
+        return
+    products = await db.list_products()
+    await message.bot(SendWidget(
+        chat_id=message.chat.id,
+        html=render_stock_widget(products),
+        caption=stock_widget_caption(products),
+        allow_queries=False,
+        is_shared=False,
+    ))
+
+
 async def search_and_reply(message: Message, db: Database, query: str) -> None:
     products = await db.search_products(query)
     if not products:
@@ -142,6 +158,11 @@ async def find_command(message: Message, state: FSMContext, db: Database) -> Non
         await message.answer("Использование: /find <часть названия>", reply_markup=keyboards.main_menu())
         return
     await search_and_reply(message, db, query)
+
+
+@router.message(Command("widget"))
+async def widget_command(message: Message, state: FSMContext, db: Database) -> None:
+    await show_stock_widget(message, db, state)
 
 
 # Menu actions are registered before state handlers so a menu tap restarts that flow.
@@ -187,6 +208,11 @@ async def history_menu(message: Message, state: FSMContext, db: Database) -> Non
         change = f"{sign}{abs(item['delta'])}"
         lines.append(f"{timestamp} — {item['user_name']}: {change} {item['product_name']}")
     await send_chunked_lines(message, lines)
+
+
+@router.message(F.text == keyboards.WIDGET)
+async def widget_menu(message: Message, state: FSMContext, db: Database) -> None:
+    await show_stock_widget(message, db, state)
 
 
 @router.message(AddFlow.name, F.text)
