@@ -32,6 +32,33 @@ python main.py
 
 Файл базы создаётся при первом запуске и сохраняется между перезапусками. `.env` и файлы SQLite исключены из Git.
 
+## Развёртывание на Ubuntu через Docker Compose
+
+Установите Docker Engine и Compose plugin из официального [репозитория Docker для Ubuntu](https://docs.docker.com/engine/install/ubuntu/), затем проверьте `sudo docker run hello-world` и `sudo docker compose version`. Для production не используйте convenience install script.
+
+```bash
+git clone https://github.com/azatswe/warehouse_bot.git
+cd warehouse_bot
+cp .env.example .env
+nano .env
+chmod 600 .env
+sudo docker compose config --quiet
+sudo docker compose up -d --build
+sudo docker compose ps
+sudo docker compose logs --tail=100 bot
+```
+
+В `.env` задайте `BOT_TOKEN` и реальные Telegram ID в `ALLOWED_USERS`. Не отправляйте `.env` в Git и не публикуйте его содержимое. Compose сохраняет SQLite в отдельном Docker volume; сам volume не является резервной копией — настройте и проверьте отдельный backup базы.
+
+Обновление после получения новой версии проекта:
+
+```bash
+git pull --ff-only
+sudo docker compose up -d --build
+```
+
+Бот использует Telegram long polling и не предоставляет входящий HTTP-сервис: порты не публикуются, домен и TLS для самого бота не нужны. Серверу требуется исходящий доступ к Telegram API. Использование группы `docker` даёт пользователю практически root-доступ; в примерах оставлен `sudo`.
+
 ## Функции
 
 - **Добавить товар** — название 2–100 символов и количество от 1 до 1 000 000; совпадающие названия объединяются без учёта регистра и лишних пробелов.
