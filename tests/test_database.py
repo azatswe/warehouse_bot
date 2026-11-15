@@ -106,6 +106,17 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def test_normalization_collapses_whitespace_and_casefolds(self):
         self.assertEqual(normalize_name("  ШИНЫ \t205/55  "), "шины 205/55")
 
+    async def test_cleanup_setting_defaults_off_and_persists(self):
+        self.assertFalse(await self.db.cleanup_enabled(42))
+
+        await self.db.set_cleanup_enabled(42, True)
+        reopened = Database(self.path)
+        await reopened.initialize()
+        self.assertTrue(await reopened.cleanup_enabled(42))
+
+        await reopened.set_cleanup_enabled(42, False)
+        self.assertFalse(await self.db.cleanup_enabled(42))
+
 
 if __name__ == "__main__":
     unittest.main()

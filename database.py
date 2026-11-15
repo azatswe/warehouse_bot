@@ -34,7 +34,27 @@ class Database:
                     action TEXT NOT NULL CHECK (action IN ('add', 'remove', 'delete')),
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS user_settings (
+                    user_id INTEGER PRIMARY KEY,
+                    cleanup_enabled INTEGER NOT NULL DEFAULT 0 CHECK (cleanup_enabled IN (0, 1))
+                );
             """)
+            await db.commit()
+
+    async def cleanup_enabled(self, user_id: int) -> bool:
+        async with aiosqlite.connect(self.path) as db:
+            row = await (await db.execute(
+                "SELECT cleanup_enabled FROM user_settings WHERE user_id = ?", (user_id,),
+            )).fetchone()
+            return bool(row[0]) if row else False
+
+    async def set_cleanup_enabled(self, user_id: int, enabled: bool) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "INSERT INTO user_settings(user_id, cleanup_enabled) VALUES (?, ?) "
+                "ON CONFLICT(user_id) DO UPDATE SET cleanup_enabled = excluded.cleanup_enabled",
+                (user_id, int(enabled)),
+            )
             await db.commit()
 
     async def add_product(self, display_name: str, quantity: int, user_id: int, user_name: str) -> int:

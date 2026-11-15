@@ -1,3 +1,4 @@
+import importlib
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -9,7 +10,7 @@ from aiogram.methods import AnswerCallbackQuery, DeleteMessage, SendMessage
 from aiogram.types import CallbackQuery, Chat, InlineKeyboardMarkup, Message, PhotoSize, Update, User
 
 from database import Database
-from handlers import router
+import handlers.stock as stock_handlers
 from main import AllowedUsersMiddleware
 
 
@@ -63,7 +64,9 @@ class HandlerFlowTests(unittest.IsolatedAsyncioTestCase):
         self.dispatcher["db"] = self.db
         self.dispatcher.message.outer_middleware(AllowedUsersMiddleware(frozenset({42})))
         self.dispatcher.callback_query.outer_middleware(AllowedUsersMiddleware(frozenset({42})))
-        self.dispatcher.include_router(router)
+        # Each dispatcher needs its own Router instance; aiogram routers cannot be reattached.
+        importlib.reload(stock_handlers)
+        self.dispatcher.include_router(stock_handlers.router)
         self.update_id = 0
 
     async def asyncTearDown(self):
@@ -108,11 +111,12 @@ class HandlerFlowTests(unittest.IsolatedAsyncioTestCase):
         return [call.text for call in self.session.calls if isinstance(call, SendMessage)]
 
     async def test_main_user_flows_and_recovery_paths(self):
+        await self.db.set_cleanup_enabled(42, True)
         await self.send_text("/start")
         menu = self.session.calls[0].reply_markup
         self.assertEqual(
             {button.text for row in menu.keyboard for button in row},
-            {"➕ Добавить товар", "📤 Списать товар", "📦 Остатки", "🔎 Найти товар", "🗑 Удалить товар", "🕘 История операций"},
+            {"➕ Добавить товар", "📤 Списать товар", "📦 Остатки", "🔎 Найти товар", "🗑 Удалить товар", "🕘 История операций", "🧹 Автоудаление (вкл/выкл)"},
         )
         await self.send_text("➕ Добавить товар")
         await self.send_photo()
@@ -239,6 +243,28 @@ class HandlerFlowTests(unittest.IsolatedAsyncioTestCase):
         with self.assertLogs("handlers.stock", level="ERROR"):
             await self.send_text("/list")
         self.assertIn("Что-то пошло не так", self.replies()[-1])
+
+    async def test_cleanup_is_opt_in_and_toggle_controls_deletion(self):
+        await self.send_text("/start")
+        self.assertIn("Автоудаление сейчас выключено", self.replies()[-1])
+        delete_count = sum(isinstance(call, DeleteMessage) for call in self.session.calls)
+
+        await self.send_text("Обычное сообщение")
+        self.assertEqual(sum(isinstance(call, DeleteMessage) for call in self.session.calls), delete_count)
+
+        await self.send_text("🧹 Автоудаление (вкл/выкл)")
+        self.assertTrue(await self.db.cleanup_enabled(42))
+        self.assertEqual(sum(isinstance(call, DeleteMessage) for call in self.session.calls), delete_count + 1)
+        self.assertIn("Автоудаление включено", self.replies()[-1])
+
+        await self.send_text("Теперь удалится")
+        self.assertEqual(sum(isinstance(call, DeleteMessage) for call in self.session.calls), delete_count + 2)
+
+        await self.send_text("🧹 Автоудаление (вкл/выкл)")
+        self.assertFalse(await self.db.cleanup_enabled(42))
+        self.assertEqual(sum(isinstance(call, DeleteMessage) for call in self.session.calls), delete_count + 2)
+        await self.send_text("Теперь останется")
+        self.assertEqual(sum(isinstance(call, DeleteMessage) for call in self.session.calls), delete_count + 2)
 
 if __name__ == "__main__":
     unittest.main()

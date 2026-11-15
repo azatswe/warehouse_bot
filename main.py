@@ -2,7 +2,6 @@ import asyncio
 import logging
 
 from aiogram import BaseMiddleware, Bot, Dispatcher
-from aiogram.exceptions import TelegramAPIError
 from aiogram.types import CallbackQuery, Message
 
 from config import load_config
@@ -22,13 +21,21 @@ class AllowedUsersMiddleware(BaseMiddleware):
             elif isinstance(event, CallbackQuery):
                 await event.answer("У вас нет доступа", show_alert=True)
             return None
+        db = data.get("db")
+        data["cleanup_enabled"] = False
+        if user is not None and db is not None:
+            try:
+                data["cleanup_enabled"] = await db.cleanup_enabled(user.id)
+            except Exception as exc:
+                logging.getLogger(__name__).debug("Could not read chat cleanup setting: %s", exc)
         try:
             return await handler(event, data)
         finally:
             if isinstance(event, Message) and event.chat.type == "private":
                 try:
-                    await event.delete()
-                except TelegramAPIError as exc:
+                    if db and user and await db.cleanup_enabled(user.id):
+                        await event.delete()
+                except Exception as exc:
                     logging.getLogger(__name__).debug("Could not clean up private chat input: %s", exc)
 
 
