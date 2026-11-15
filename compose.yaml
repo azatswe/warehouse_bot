@@ -1,0 +1,25 @@
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: warehouse-bot:local
+    env_file:
+      - .env
+    environment:
+      DATABASE_PATH: /data/warehouse.db
+    volumes:
+      - warehouse_data:/data
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 20s
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  warehouse_data:
