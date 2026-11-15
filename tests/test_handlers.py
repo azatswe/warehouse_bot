@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.session.base import BaseSession
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.methods import AnswerCallbackQuery, SendMessage
 from aiogram.types import CallbackQuery, Chat, InlineKeyboardMarkup, Message, PhotoSize, Update, User
@@ -19,6 +20,7 @@ class RecordingSession(BaseSession):
         super().__init__()
         self.calls = []
         self.sent_messages = []
+        self.reject_widgets = False
 
     async def close(self):
         return None
@@ -37,6 +39,8 @@ class RecordingSession(BaseSession):
             self.sent_messages.append(message)
             return message
         if isinstance(method, SendWidget):
+            if self.reject_widgets:
+                raise TelegramBadRequest(method=method, message="INPUT_MEDIA_WIDGET_NOT_ALLOWED")
             message = Message(
                 message_id=len(self.calls),
                 date=datetime.now(timezone.utc),
@@ -249,11 +253,16 @@ class HandlerFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(self.session.calls[-1], SendMessage)
         self.assertIn("только в личном чате", self.session.calls[-1].text)
 
+        self.session.reject_widgets = True
+        await self.send_text("/widget")
+        self.assertIn("Telegram пока не разрешает HTML-панель", self.replies()[-2])
+        self.assertIn("Граничный товар — 1000000 шт.", self.replies()[-1])
+        self.assertIn("Всего позиций: 1 · Всего единиц: 1000000", self.replies()[-1])
+
         self.dispatcher["db"] = FailingDatabase()
         with self.assertLogs("handlers.stock", level="ERROR"):
             await self.send_text("/list")
         self.assertEqual(self.replies()[-1], "Что-то пошло не так, попробуйте ещё раз")
-
 
 if __name__ == "__main__":
     unittest.main()

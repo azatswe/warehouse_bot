@@ -3,6 +3,7 @@ import re
 from datetime import datetime
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -114,13 +115,25 @@ async def show_stock_widget(message: Message, db: Database, state: FSMContext) -
         await message.answer("Панель склада доступна только в личном чате с ботом.", reply_markup=keyboards.main_menu())
         return
     products = await db.list_products()
-    await message.bot(SendWidget(
-        chat_id=message.chat.id,
-        html=render_stock_widget(products),
-        caption=stock_widget_caption(products),
-        allow_queries=False,
-        is_shared=False,
-    ))
+    try:
+        await message.bot(SendWidget(
+            chat_id=message.chat.id,
+            html=render_stock_widget(products),
+            caption=stock_widget_caption(products),
+            allow_queries=False,
+            is_shared=False,
+        ))
+    except TelegramBadRequest as exc:
+        # Widgets are a newly introduced Bot API feature and may not be enabled
+        # for every bot/API environment yet. Preserve the inventory flow when
+        # Telegram explicitly rejects this media type.
+        if "INPUT_MEDIA_WIDGET_NOT_ALLOWED" not in str(exc):
+            raise
+        logger.warning("Telegram does not allow HTML widgets for this bot; sending text inventory fallback")
+        await message.answer(
+            "Telegram пока не разрешает HTML-панель для этого бота. Показываю остатки обычным сообщением."
+        )
+        await show_stock(message, db)
 
 
 async def search_and_reply(message: Message, db: Database, query: str) -> None:
