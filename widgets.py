@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import html
+import json
 import zlib
-from datetime import datetime
 from typing import ClassVar
 
 from aiogram.methods.base import TelegramMethod
@@ -10,7 +9,7 @@ from aiogram.types import Message
 
 
 class SendWidget(TelegramMethod[Message]):
-    """Bot API 10.4 method not yet included in the project's aiogram version."""
+    """Bot API 10.4 method, typed locally until aiogram adds it."""
 
     __returning__: ClassVar[type[Message]] = Message
     __api_method__: ClassVar[str] = "sendWidget"
@@ -22,100 +21,114 @@ class SendWidget(TelegramMethod[Message]):
     is_shared: bool = False
 
 
-VISIBLE_PRODUCTS = 6
+PAGE_SIZE = 3
+MAX_PRODUCTS_IN_HTML = 12
+TARGET_COMPRESSED_BYTES = 3_800
+
+_STYLE = """<style>
+:root{color-scheme:light dark}
+*{box-sizing:border-box}
+body{font-family:system-ui,sans-serif;color:var(--tg-theme-text-color)}
+.panel{display:flex;flex-direction:column;gap:.8em}
+.heading{display:flex;align-items:center;gap:.65em}
+.mark{display:flex;align-items:center;justify-content:center;width:2.5em;height:2.5em;flex:none;border-radius:.8em;background:var(--tg-theme-button-color);color:var(--tg-theme-button-text-color);font-size:1.1em}
+.title{font-size:1.12em;font-weight:700;letter-spacing:-.02em}
+.subtitle,.muted{color:var(--tg-theme-hint-color);font-size:.82em}
+.metrics{display:grid;grid-template-columns:1fr 1fr;gap:.55em}
+.metric{min-width:0;padding:.65em .75em;border-radius:.85em;background:var(--tg-theme-secondary-bg-color)}
+.metric-label{display:block;color:var(--tg-theme-hint-color);font-size:.76em}
+.metric-value{display:block;margin-top:.12em;font-size:1.25em;line-height:1.15;font-weight:700;font-variant-numeric:tabular-nums}
+.section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:.4em}
+.section-title{font-size:.9em;font-weight:650}
+.products{overflow:hidden;border-radius:.85em;background:var(--tg-theme-secondary-bg-color)}
+.row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:.5em;min-height:2.6em;padding:.48em .7em}
+.row+.row{border-top:1px solid var(--tg-theme-section-separator-color)}
+.name{min-width:0;overflow-wrap:anywhere;font-size:.86em;line-height:1.25;user-select:text;-webkit-user-select:text}
+.quantity{white-space:nowrap;font-size:.86em;font-weight:650;font-variant-numeric:tabular-nums}
+.quantity small{color:var(--tg-theme-hint-color);font-size:.78em;font-weight:400}
+.empty{padding:1.1em .8em;text-align:center;color:var(--tg-theme-hint-color);font-size:.88em}
+.pager{display:flex;align-items:center;gap:.6em;padding:0 1.25em}
+.pager button{min-width:3em;min-height:3em;border:0;border-radius:.75em;background:var(--tg-theme-button-color);color:var(--tg-theme-button-text-color);font:inherit;font-size:.95em}
+.pager button:disabled{background:var(--tg-theme-secondary-bg-color);color:var(--tg-theme-hint-color)}
+.page-label{flex:1;text-align:center;color:var(--tg-theme-hint-color);font-size:.8em}
+.note{margin:0;color:var(--tg-theme-subtitle-text-color);font-size:.78em;line-height:1.25}
+@media(max-width:360px){.panel{gap:.65em}.metric{padding:.55em .6em}.row{padding:.42em .58em}}
+</style>"""
+
+_MARKUP = """<main class="panel">
+<header class="heading"><span class="mark">▦</span><span><strong class="title">Склад</strong><br><span class="subtitle">Текущие остатки</span></span></header>
+<section class="metrics"><div class="metric"><span class="metric-label">Позиций</span><strong class="metric-value" id="positions"></strong></div><div class="metric"><span class="metric-label">Всего единиц</span><strong class="metric-value" id="units"></strong></div></section>
+<section><div class="section-head"><strong class="section-title">Товары</strong><span class="muted" id="shown"></span></div><div class="products" id="products"></div></section>
+<nav class="pager" id="pager"><button id="prev" aria-label="Предыдущая страница">‹</button><span class="page-label" id="page"></span><button id="next" aria-label="Следующая страница">›</button></nav>
+<p class="note" id="note"></p>
+</main>"""
+
+_SCRIPT_PREFIX = """<script>
+const ITEMS=__ITEMS__;
+const TOTAL=__TOTAL__;
+const TOTAL_UNITS=__UNITS__;
+const SIZE=__PAGE_SIZE__;
+const $=id=>document.getElementById(id);
+const pages=Math.max(1,Math.ceil(ITEMS.length/SIZE));
+let page=0;
+try{const saved=Number(localStorage.getItem('stock-page'));if(Number.isInteger(saved)&&saved>=0)page=Math.min(saved,pages-1)}catch{}
+function draw(){
+ const start=page*SIZE;
+ const rows=ITEMS.slice(start,start+SIZE).map(item=>{const row=document.createElement('div');row.className='row';const name=document.createElement('span');name.className='name';name.textContent=item.n;const quantity=document.createElement('strong');quantity.className='quantity';quantity.textContent=new Intl.NumberFormat(navigator.language).format(item.q)+' ';const unit=document.createElement('small');unit.textContent='шт.';quantity.appendChild(unit);row.appendChild(name);row.appendChild(quantity);return row});
+ $('products').replaceChildren(...rows);
+ $('positions').textContent=new Intl.NumberFormat(navigator.language).format(TOTAL);
+ $('units').textContent=new Intl.NumberFormat(navigator.language).format(TOTAL_UNITS);
+ $('shown').textContent=!ITEMS.length&&TOTAL?'/list':ITEMS.length<TOTAL?'первые '+ITEMS.length+' из '+TOTAL:'';
+ $('page').textContent=ITEMS.length?((start+1)+'–'+Math.min(start+SIZE,ITEMS.length)+' из '+ITEMS.length):'Список пуст';
+ $('prev').disabled=page===0;$('next').disabled=page>=pages-1;$('pager').hidden=pages<=1;
+ $('note').textContent=!ITEMS.length&&TOTAL?'Список доступен через /list':ITEMS.length<TOTAL?'Полный перечень: /list':(TOTAL?'Снимок на момент открытия':'Добавьте первый товар через меню');
+ try{localStorage.setItem('stock-page',String(page))}catch{}
+}
+$('prev').addEventListener('click',()=>{if(page>0){page--;draw()}});
+$('next').addEventListener('click',()=>{if(page<pages-1){page++;draw()}});
+draw();
+const TW=window.TelegramWidget;if(TW&&typeof TW.ready==='function')TW.ready();
+</script>"""
 
 
-def _quantity(value: int) -> str:
-    return f"{value:,}".replace(",", " ")
-
-
-def render_stock_widget(products: list[dict], generated_at: datetime | None = None) -> str:
-    """Render a compact, read-only stock snapshot for Telegram's HTML widget."""
-    total_units = sum(int(product["quantity"]) for product in products)
-    shown_products = products[:VISIBLE_PRODUCTS]
-    timestamp = (generated_at or datetime.now().astimezone()).strftime("%d.%m.%Y · %H:%M")
-
-    if shown_products:
-        rows = []
-        for product in shown_products:
-            quantity = int(product["quantity"])
-            availability = "available" if quantity else "empty"
-            rows.append(
-                '<div class="product">'
-                '<span class="indicator ' + availability + '"></span>'
-                '<span class="product-name">' + html.escape(str(product["display_name"])) + '</span>'
-                '<strong class="product-quantity">' + _quantity(quantity) + '<small> шт.</small></strong>'
-                '</div>'
-            )
-        inventory = '<div class="products">' + "".join(rows) + "</div>"
-    else:
-        inventory = (
-            '<div class="empty-state"><span class="empty-icon">＋</span>'
-            '<strong>Склад пока пуст</strong>'
-            '<span>Добавьте первый товар через меню бота</span></div>'
-        )
-
-    more = ""
-    if len(products) > VISIBLE_PRODUCTS:
-        more = (
-            '<div class="more">Показаны первые ' + str(VISIBLE_PRODUCTS) + ' из '
-            + str(len(products)) + ' · полный список: /list</div>'
-        )
-
-    document = (
-        '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" '
-        'content="width=device-width, initial-scale=1"><style>'
-        ':root{color-scheme:light dark}'
-        '*{box-sizing:border-box}'
-        'body{margin:0;padding:12px 12px calc(18px + env(safe-area-inset-bottom));'
-        'font:14px/1.4 system-ui,sans-serif;color:var(--tg-theme-text-color,#1c1c1e)}'
-        '.panel{display:flex;flex-direction:column;gap:14px}'
-        '.heading{display:flex;align-items:center;gap:10px}'
-        '.mark{width:38px;height:38px;display:flex;align-items:center;justify-content:center;'
-        'border-radius:12px;background:var(--tg-theme-button-color,#3390ec);font-size:20px}'
-        '.title{font-size:19px;font-weight:700;letter-spacing:-.3px}'
-        '.subtitle{font-size:12px;color:var(--tg-theme-hint-color,#707579)}'
-        '.metrics{display:grid;grid-template-columns:1fr 1fr;gap:9px}'
-        '.metric{min-width:0;padding:11px 12px;border-radius:14px;'
-        'background:var(--tg-theme-secondary-bg-color,#f1f1f1)}'
-        '.metric-label{display:block;font-size:11px;color:var(--tg-theme-hint-color,#707579)}'
-        '.metric-value{display:block;margin-top:3px;font-size:21px;line-height:1.15;font-weight:700;'
-        'font-variant-numeric:tabular-nums}'
-        '.section-head{display:flex;align-items:center;justify-content:space-between;margin:1px 1px 7px}'
-        '.section-title{font-size:13px;font-weight:650}'
-        '.count{font-size:11px;color:var(--tg-theme-hint-color,#707579)}'
-        '.products{overflow:hidden;border-radius:14px;background:var(--tg-theme-secondary-bg-color,#f1f1f1)}'
-        '.product{display:flex;align-items:center;gap:9px;min-height:43px;padding:8px 11px}'
-        '.product+.product{border-top:1px solid var(--tg-theme-section-separator-color,rgba(127,127,127,.18))}'
-        '.indicator{width:7px;height:7px;flex:0 0 7px;border-radius:50%}'
-        '.available{background:#31a56a}.empty{background:var(--tg-theme-hint-color,#8e8e93)}'
-        '.product-name{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}'
-        '.product-quantity{flex:none;font-size:13px;font-variant-numeric:tabular-nums}'
-        '.product-quantity small{font-size:10px;font-weight:500;color:var(--tg-theme-hint-color,#707579)}'
-        '.empty-state{min-height:106px;display:flex;flex-direction:column;align-items:center;'
-        'justify-content:center;gap:5px;padding:14px;border-radius:14px;'
-        'background:var(--tg-theme-secondary-bg-color,#f1f1f1);text-align:center}'
-        '.empty-icon{width:28px;height:28px;display:flex;align-items:center;justify-content:center;'
-        'border-radius:50%;background:var(--tg-theme-bg-color,#fff);font-size:20px;'
-        'color:var(--tg-theme-button-color,#3390ec)}'
-        '.empty-state span:last-child{font-size:11px;color:var(--tg-theme-hint-color,#707579)}'
-        '.more{margin-top:-7px;font-size:11px;color:var(--tg-theme-hint-color,#707579);text-align:center}'
-        '.footer{display:flex;justify-content:space-between;gap:8px;font-size:10px;'
-        'color:var(--tg-theme-hint-color,#707579)}'
-        '</style></head><body><main class="panel">'
-        '<header class="heading"><div class="mark">📦</div><div><div class="title">Панель склада</div>'
-        '<div class="subtitle">Сводка по текущим остаткам</div></div></header>'
-        '<section class="metrics"><div class="metric"><span class="metric-label">Позиций</span>'
-        '<strong class="metric-value">' + _quantity(len(products)) + '</strong></div>'
-        '<div class="metric"><span class="metric-label">Всего единиц</span>'
-        '<strong class="metric-value">' + _quantity(total_units) + '</strong></div></section>'
-        '<section><div class="section-head"><strong class="section-title">Товары</strong>'
-        '<span class="count">' + str(min(len(products), VISIBLE_PRODUCTS)) + ' из '
-        + str(len(products)) + '</span></div>' + inventory + '</section>'
-        + more + '<footer class="footer"><span>Обновлено при открытии</span>'
-        '<span>' + html.escape(timestamp) + '</span></footer></main></body></html>'
+def _script_json(value: object) -> str:
+    """Encode JSON safe to embed in an inline script, including hostile names."""
+    return (
+        json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
     )
 
+
+def _build_html(products: list[dict], total: int, total_units: int) -> str:
+    items = [{"n": str(product["display_name"]), "q": int(product["quantity"])} for product in products]
+    script = (
+        _SCRIPT_PREFIX.replace("__ITEMS__", _script_json(items))
+        .replace("__TOTAL__", str(total))
+        .replace("__UNITS__", str(total_units))
+        .replace("__PAGE_SIZE__", str(PAGE_SIZE))
+    )
+    return _STYLE + _MARKUP + script
+
+
+def render_stock_widget(products: list[dict]) -> str:
+    """Build a compact, paged Bot API widget with a safe text-only data path."""
+    total = len(products)
+    total_units = sum(int(product["quantity"]) for product in products)
+    count = min(total, MAX_PRODUCTS_IN_HTML)
+
+    while count:
+        document = _build_html(products[:count], total, total_units)
+        encoded = document.encode("utf-8")
+        compressed_size = len(zlib.compress(encoded, 9))
+        if b"\0" not in encoded and len(encoded) <= 32_768 and compressed_size <= TARGET_COMPRESSED_BYTES:
+            return document
+        count -= 1
+
+    document = _build_html([], total, total_units)
     encoded = document.encode("utf-8")
     if b"\0" in encoded or len(encoded) > 32_768 or len(zlib.compress(encoded, 9)) > 4_096:
         raise ValueError("Telegram widget HTML exceeds the Bot API size limit")
@@ -123,6 +136,7 @@ def render_stock_widget(products: list[dict], generated_at: datetime | None = No
 
 
 def stock_widget_caption(products: list[dict]) -> str:
-    """Accessible fallback for Telegram clients that do not render widgets."""
+    """Caption remains useful in chat lists and clients without widget support."""
     total_units = sum(int(product["quantity"]) for product in products)
-    return f"Склад: {len(products)} позиций · {_quantity(total_units)} шт. Полный список: /list"
+    caption = f"Склад: {len(products)} позиций · {total_units} шт. Полный список: /list"
+    return caption[:1024]
