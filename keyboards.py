@@ -7,6 +7,7 @@ STOCK = "📦 Остатки"
 SEARCH = "🔎 Найти товар"
 DELETE = "🗑 Удалить товар"
 HISTORY = "🕘 История операций"
+CLEANUP = "🧹 Автоудаление (вкл/выкл)"
 
 
 def main_menu() -> ReplyKeyboardMarkup:
@@ -15,6 +16,7 @@ def main_menu() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=ADD), KeyboardButton(text=WRITE_OFF)],
             [KeyboardButton(text=STOCK), KeyboardButton(text=SEARCH)],
             [KeyboardButton(text=DELETE), KeyboardButton(text=HISTORY)],
+            [KeyboardButton(text=CLEANUP)],
         ],
         resize_keyboard=True,
     )
