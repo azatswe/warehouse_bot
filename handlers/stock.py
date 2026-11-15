@@ -124,16 +124,13 @@ async def show_stock_widget(message: Message, db: Database, state: FSMContext) -
             is_shared=False,
         ))
     except TelegramBadRequest as exc:
-        # Widgets are a newly introduced Bot API feature and may not be enabled
-        # for every bot/API environment yet. Preserve the inventory flow when
-        # Telegram explicitly rejects this media type.
         if "INPUT_MEDIA_WIDGET_NOT_ALLOWED" not in str(exc):
             raise
-        logger.warning("Telegram does not allow HTML widgets for this bot; sending text inventory fallback")
+        logger.warning("Telegram API rejected HTML widget delivery for this bot")
         await message.answer(
-            "Telegram пока не разрешает HTML-панель для этого бота. Показываю остатки обычным сообщением."
+            "Telegram API отклонил HTML-панель для этого бота. "
+            "Список остатков доступен через /list."
         )
-        await show_stock(message, db)
 
 
 async def search_and_reply(message: Message, db: Database, query: str) -> None:

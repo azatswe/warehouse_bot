@@ -245,9 +245,10 @@ class HandlerFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(widget.chat_id, 42)
         self.assertFalse(widget.allow_queries)
         self.assertFalse(widget.is_shared)
-        self.assertIn("Панель склада", widget.html)
-        self.assertIn("1 000 000", widget.html)
+        self.assertIn("Склад", widget.html)
+        self.assertIn("const TOTAL_UNITS=1000000", widget.html)
         self.assertIn("Полный список: /list", widget.caption)
+        self.assertLessEqual(len(widget.html.encode("utf-8")), 32_768)
 
         await self.send_text("/widget", chat_type="group")
         self.assertIsInstance(self.session.calls[-1], SendMessage)
@@ -255,9 +256,8 @@ class HandlerFlowTests(unittest.IsolatedAsyncioTestCase):
 
         self.session.reject_widgets = True
         await self.send_text("/widget")
-        self.assertIn("Telegram пока не разрешает HTML-панель", self.replies()[-2])
-        self.assertIn("Граничный товар — 1000000 шт.", self.replies()[-1])
-        self.assertIn("Всего позиций: 1 · Всего единиц: 1000000", self.replies()[-1])
+        self.assertIn("Telegram API отклонил HTML-панель для этого бота", self.replies()[-1])
+        self.assertNotIn("Граничный товар", self.replies()[-1])
 
         self.dispatcher["db"] = FailingDatabase()
         with self.assertLogs("handlers.stock", level="ERROR"):
