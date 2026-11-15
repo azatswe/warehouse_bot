@@ -37,6 +37,34 @@ def user_name(message: Message) -> str:
     return user.full_name or user.username or str(user.id)
 
 
+def chunk_lines(lines: list[str], limit: int = 4000) -> list[str]:
+    chunks: list[str] = []
+    current = ""
+    for line in lines:
+        if len(line) > limit:
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.extend(line[offset:offset + limit] for offset in range(0, len(line), limit))
+            continue
+        candidate = f"{current}\n{line}" if current else line
+        if len(candidate) > limit:
+            if current:
+                chunks.append(current)
+            current = line
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+async def send_chunked_lines(message: Message, lines: list[str]) -> None:
+    chunks = chunk_lines(lines)
+    for index, chunk in enumerate(chunks):
+        await message.answer(chunk, reply_markup=keyboards.main_menu() if index == len(chunks) - 1 else None)
+
+
 async def prompt_add_name(message: Message, state: FSMContext) -> None:
     await state.set_state(AddFlow.name)
     await message.answer("Введите вид (название) товара")
@@ -76,19 +104,7 @@ async def show_stock(message: Message, db: Database) -> None:
     lines.extend(f"{index}. {product['display_name']} — {product['quantity']} шт."
                  for index, product in enumerate(products, start=1))
     lines.append(f"Всего позиций: {len(products)} · Всего единиц: {total}")
-    chunks: list[str] = []
-    current = ""
-    for line in lines:
-        candidate = f"{current}\n{line}" if current else line
-        if len(candidate) > 4000:
-            chunks.append(current)
-            current = line
-        else:
-            current = candidate
-    if current:
-        chunks.append(current)
-    for index, chunk in enumerate(chunks):
-        await message.answer(chunk, reply_markup=keyboards.main_menu() if index == len(chunks) - 1 else None)
+    await send_chunked_lines(message, lines)
 
 
 async def search_and_reply(message: Message, db: Database, query: str) -> None:
@@ -97,7 +113,7 @@ async def search_and_reply(message: Message, db: Database, query: str) -> None:
         await message.answer("Ничего не найдено", reply_markup=keyboards.main_menu())
         return
     lines = [f"{product['display_name']} — {product['quantity']} шт." for product in products]
-    await message.answer("\n".join(lines), reply_markup=keyboards.main_menu())
+    await send_chunked_lines(message, lines)
 
 
 @router.message(CommandStart())
@@ -167,12 +183,13 @@ async def history_menu(message: Message, state: FSMContext, db: Database) -> Non
     lines = []
     for item in entries:
         timestamp = datetime.fromisoformat(item["created_at"]).astimezone().strftime("%d.%m.%Y %H:%M")
-        change = f"{item['delta']:+d}".replace("-", "−")
+        sign = "−" if item["delta"] < 0 or item["action"] == "delete" else "+"
+        change = f"{sign}{abs(item['delta'])}"
         lines.append(f"{timestamp} — {item['user_name']}: {change} {item['product_name']}")
-    await message.answer("\n".join(lines), reply_markup=keyboards.main_menu())
+    await send_chunked_lines(message, lines)
 
 
-@router.message(AddFlow.name)
+@router.message(AddFlow.name, F.text)
 async def receive_product_name(message: Message, state: FSMContext) -> None:
     name = (message.text or "").strip()
     if not 2 <= len(name) <= 100:
@@ -183,7 +200,7 @@ async def receive_product_name(message: Message, state: FSMContext) -> None:
     await message.answer("Введите количество")
 
 
-@router.message(AddFlow.quantity)
+@router.message(AddFlow.quantity, F.text)
 async def receive_add_quantity(message: Message, state: FSMContext, db: Database) -> None:
     text = (message.text or "").strip()
     if not re.fullmatch(r"[0-9]+", text):
@@ -194,7 +211,10 @@ async def receive_add_quantity(message: Message, state: FSMContext, db: Database
         await message.answer("Количество должно быть от 1 до 1 000 000. Введите количество")
         return
     quantity = int(digits)
-    if not 1 <= quantity <= 1_000_000:
+    if quantity == 0:
+        await message.answer("Введите целое число больше 0. Введите количество")
+        return
+    if quantity > 1_000_000:
         await message.answer("Количество должно быть от 1 до 1 000 000. Введите количество")
         return
     data = await state.get_data()
@@ -220,7 +240,7 @@ async def choose_write_off(callback: CallbackQuery, state: FSMContext, db: Datab
     await callback.message.answer(f"Введите количество для списания: {product['display_name']}")
 
 
-@router.message(WriteOffFlow.quantity)
+@router.message(WriteOffFlow.quantity, F.text)
 async def receive_write_off_quantity(message: Message, state: FSMContext, db: Database) -> None:
     text = (message.text or "").strip()
     if not re.fullmatch(r"[0-9]+", text):
@@ -243,7 +263,7 @@ async def receive_write_off_quantity(message: Message, state: FSMContext, db: Da
         await message.answer(f"Списано {quantity} шт. Осталось: {result[1]} шт.", reply_markup=keyboards.main_menu())
 
 
-@router.message(SearchFlow.query)
+@router.message(SearchFlow.query, F.text)
 async def receive_search_query(message: Message, state: FSMContext, db: Database) -> None:
     query = (message.text or "").strip()
     if not query:
@@ -283,7 +303,7 @@ async def choose_delete(callback: CallbackQuery, state: FSMContext, db: Database
                                   reply_markup=keyboards.delete_confirmation(product_id))
 
 
-@router.message(DeleteFlow.confirmation)
+@router.message(DeleteFlow.confirmation, F.text)
 async def repeat_delete_confirmation(message: Message, state: FSMContext, db: Database) -> None:
     data = await state.get_data()
     product = await db.get_product(data["product_id"])
