@@ -61,6 +61,38 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(products[0]["quantity"], 10)
         self.assertEqual(len(await self.db.history(20)), 10)
 
+    async def test_concurrent_writeoffs_never_go_below_zero(self):
+        await self.db.add_product("Крепёж", 5, 1, "Арслан")
+        product = (await self.db.list_products())[0]
+        results = await asyncio.gather(*(
+            self.db.remove_quantity(product["id"], 1, user_id, f"Пользователь {user_id}")
+            for user_id in range(1, 11)
+        ))
+
+        self.assertEqual(sum(1 for result in results if result[0]), 5)
+        self.assertEqual(sum(1 for result in results if not result[0]), 5)
+        self.assertEqual((await self.db.list_products())[0]["quantity"], 0)
+        self.assertEqual(len(await self.db.history(20)), 6)
+
+    async def test_products_are_sorted_and_search_is_case_insensitive(self):
+        await self.db.add_product("Шины 205", 1, 1, "Арслан")
+        await self.db.add_product("Масло", 1, 1, "Арслан")
+        await self.db.add_product("Фильтр", 1, 1, "Арслан")
+
+        products = await self.db.list_products()
+        self.assertEqual([product["display_name"] for product in products], ["Масло", "Фильтр", "Шины 205"])
+        self.assertEqual([product["display_name"] for product in await self.db.search_products("шИны")], ["Шины 205"])
+        self.assertEqual(await self.db.search_products("не найдено"), [])
+
+    async def test_history_returns_only_latest_twenty_operations(self):
+        for index in range(25):
+            await self.db.add_product("Товар", 1, index, f"Пользователь {index}")
+
+        history = await self.db.history(20)
+        self.assertEqual(len(history), 20)
+        self.assertEqual(history[0]["user_id"], 24)
+        self.assertEqual(history[-1]["user_id"], 5)
+
     async def test_delete_records_negative_balance(self):
         await self.db.add_product("Масло", 7, 5, "Арслан")
         product = (await self.db.list_products())[0]
