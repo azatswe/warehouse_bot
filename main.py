@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 from aiogram import BaseMiddleware, Bot, Dispatcher
+from aiogram.exceptions import TelegramAPIError
 from aiogram.types import CallbackQuery, Message
 
 from config import load_config
@@ -21,7 +22,14 @@ class AllowedUsersMiddleware(BaseMiddleware):
             elif isinstance(event, CallbackQuery):
                 await event.answer("У вас нет доступа", show_alert=True)
             return None
-        return await handler(event, data)
+        try:
+            return await handler(event, data)
+        finally:
+            if isinstance(event, Message) and event.chat.type == "private":
+                try:
+                    await event.delete()
+                except TelegramAPIError as exc:
+                    logging.getLogger(__name__).debug("Could not clean up private chat input: %s", exc)
 
 
 async def main() -> None:

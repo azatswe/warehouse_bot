@@ -20,8 +20,8 @@ class RenderingTests(unittest.IsolatedAsyncioTestCase):
         chunks = [call.args[0] for call in message.answer.await_args_list]
         self.assertGreater(len(chunks), 1)
         self.assertTrue(all(len(chunk) <= 4000 for chunk in chunks))
-        self.assertTrue(chunks[0].startswith("Остатки на складе:"))
-        self.assertIn("Всего позиций: 80 · Всего единиц: 3160", chunks[-1])
+        self.assertTrue(chunks[0].startswith("📦 Остатки на складе:"))
+        self.assertIn("Позиций: 80 · Всего единиц: 3160", chunks[-1])
         self.assertEqual(sum(chunk.count(" — ") for chunk in chunks), 80)
 
     def test_chunk_lines_does_not_emit_empty_chunks(self):
